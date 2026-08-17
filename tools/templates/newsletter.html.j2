@@ -1,0 +1,309 @@
+{% import "components.j2" as c %}
+<meta charset="utf-8">
+<title>{{ meta.title }}</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:            #f9f9f7;
+    --surface:         #fcfcfb;
+    --ink-primary:     #0b0b0b;
+    --ink-secondary:   #52514e;
+    --ink-muted:       #898781;
+    --hairline:        rgba(11, 11, 11, 0.10);
+    --gridline:        #e1e0d9;
+    --accent:          #2a78d6;
+    --accent-2:        #eb6834;
+    --accent-3:        #1baf7a;
+    --delta-up:        #006300;
+    --delta-down:      #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page:          #0d0d0d;
+      --surface:       #1a1a19;
+      --ink-primary:   #ffffff;
+      --ink-secondary: #c3c2b7;
+      --ink-muted:     #898781;
+      --hairline:      rgba(255, 255, 255, 0.10);
+      --gridline:      #2c2c2a;
+      --accent:        #3987e5;
+      --accent-2:      #d95926;
+      --accent-3:      #199e70;
+      --delta-up:      #0ca30c;
+      --delta-down:    #d03b3b;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page:          #0d0d0d;
+    --surface:       #1a1a19;
+    --ink-primary:   #ffffff;
+    --ink-secondary: #c3c2b7;
+    --ink-muted:     #898781;
+    --hairline:      rgba(255, 255, 255, 0.10);
+    --gridline:      #2c2c2a;
+    --accent:        #3987e5;
+    --accent-2:      #d95926;
+    --accent-3:      #199e70;
+    --delta-up:      #0ca30c;
+    --delta-down:    #d03b3b;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page);
+    color: var(--ink-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    max-width: 42rem;
+    margin: 0 auto;
+    padding: 3.5rem 1.5rem 4rem;
+  }
+
+  /* Masthead */
+  .eyebrow {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    border-top: 1px solid var(--hairline);
+    padding-top: 0.9rem;
+    margin: 0 0 1rem;
+  }
+  h1.title {
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+    font-size: clamp(1.75rem, 4vw, 2.5rem);
+    font-weight: 600;
+    line-height: 1.15;
+    letter-spacing: -0.01em;
+    margin: 0 0 0.85rem;
+    text-wrap: balance;
+  }
+  .dek {
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+    font-style: italic;
+    font-size: 1.2rem;
+    line-height: 1.5;
+    color: var(--ink-secondary);
+    margin: 0 0 1.1rem;
+    text-wrap: balance;
+  }
+  .meta-line {
+    font-size: 0.8rem;
+    color: var(--ink-muted);
+    margin: 0 0 1.6rem;
+  }
+  .masthead-rule {
+    border: none;
+    border-top: 3px solid var(--ink-primary);
+    margin: 0 0 0.3rem;
+  }
+  .masthead-rule + .masthead-rule {
+    border-top: 1px solid var(--ink-primary);
+    margin-bottom: 2.6rem;
+  }
+
+  /* Body rhythm */
+  main { display: flex; flex-direction: column; gap: 2.4rem; }
+  h2.section-heading {
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+    font-size: 1.375rem;
+    font-weight: 600;
+    margin: 0 0 0.9rem;
+  }
+  .narrative p {
+    font-size: 1.0625rem;
+    line-height: 1.68;
+    margin: 0 0 1.1rem;
+  }
+  .narrative p:last-child { margin-bottom: 0; }
+
+  /* Sup source references */
+  .src-ref { font-size: 0.7em; margin-left: 0.1em; }
+  .src-ref a {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .src-ref a:hover { text-decoration: underline; }
+  .src-ref a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* Stat tiles */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+    gap: 1px;
+    background: var(--hairline);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .stat-tile {
+    background: var(--surface);
+    padding: 1.1rem 1.2rem;
+  }
+  .stat-label {
+    font-size: 0.8rem;
+    color: var(--ink-secondary);
+    margin-bottom: 0.35rem;
+  }
+  .stat-value {
+    font-size: 1.75rem;
+    font-weight: 600;
+    line-height: 1.1;
+  }
+  .stat-delta {
+    margin-top: 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+  }
+  .stat-delta.up { color: var(--delta-up); }
+  .stat-delta.down { color: var(--delta-down); }
+
+  /* Comparison bars */
+  .comparison-bars {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 1.2rem 1.3rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+  }
+  .bar-row {
+    display: grid;
+    grid-template-columns: minmax(6.5rem, 1fr) 3fr auto;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .bar-label { font-size: 0.85rem; color: var(--ink-secondary); }
+  .bar-track {
+    background: var(--gridline);
+    border-radius: 4px;
+    height: 20px;
+    overflow: hidden;
+  }
+  .bar-fill { height: 100%; border-radius: 4px 0 0 4px; }
+  .bar-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    min-width: 3.2rem;
+  }
+
+  /* Trend / sparkline */
+  .trend-block {
+    background: var(--surface);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    padding: 1.2rem 1.3rem;
+  }
+  .trend-label { font-size: 0.85rem; color: var(--ink-secondary); margin-bottom: 0.6rem; }
+  .trend-unit { color: var(--ink-muted); }
+  .trend-svg { width: 100%; height: auto; display: block; }
+  .trend-axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    color: var(--ink-muted);
+    margin-top: 0.4rem;
+  }
+
+  /* Quote */
+  .quote-block {
+    margin: 0;
+    padding: 0.2rem 0 0.2rem 1.2rem;
+    border-left: 3px solid var(--accent);
+  }
+  .quote-block p {
+    font-family: ui-serif, Georgia, "Times New Roman", serif;
+    font-style: italic;
+    font-size: 1.2rem;
+    line-height: 1.5;
+    margin: 0 0 0.5rem;
+    color: var(--ink-primary);
+  }
+  .quote-block cite {
+    font-style: normal;
+    font-size: 0.85rem;
+    color: var(--ink-muted);
+  }
+
+  /* Icon list */
+  .icon-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+  .icon-list li { display: flex; align-items: baseline; gap: 0.65rem; font-size: 1.0625rem; line-height: 1.5; }
+  .icon-glyph { color: var(--accent); font-weight: 600; flex-shrink: 0; }
+
+  /* Sources footer */
+  footer {
+    margin-top: 3rem;
+    padding-top: 1.4rem;
+    border-top: 1px solid var(--hairline);
+  }
+  footer h2 {
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-muted);
+    margin: 0 0 0.9rem;
+  }
+  footer ol { margin: 0; padding: 0 0 0 1.2rem; display: flex; flex-direction: column; gap: 0.45rem; }
+  footer li { font-size: 0.85rem; color: var(--ink-secondary); }
+  footer a { color: var(--ink-secondary); }
+  footer a:hover { color: var(--accent); }
+</style>
+
+<div class="page">
+  <header>
+    <p class="eyebrow">{{ meta.topic or meta.title }}</p>
+    <h1 class="title">{{ meta.title }}</h1>
+    {% if meta.dek %}<p class="dek">{{ meta.dek }}</p>{% endif %}
+    <p class="meta-line">
+      {{ render_date }}{% if meta.read_time_minutes %} &middot; {{ meta.read_time_minutes }} min read{% endif %}
+    </p>
+    <hr class="masthead-rule">
+    <hr class="masthead-rule">
+  </header>
+
+  <main>
+    {% for section in sections %}
+      {% if section.type == "narrative" %}
+        <div class="narrative">
+          {% if section.heading %}<h2 class="section-heading">{{ section.heading }}</h2>{% endif %}
+          {% for para in section.body.split("\n\n") %}<p>{{ para }}</p>{% endfor %}
+        </div>
+      {% elif section.type == "stat_row" %}
+        <div class="stat-row">
+          {% for stat in section.stats %}{{ c.stat_tile(stat) }}{% endfor %}
+        </div>
+      {% elif section.type == "comparison" %}
+        {{ c.comparison_bars(section) }}
+      {% elif section.type == "trend" %}
+        {{ c.sparkline(section) }}
+      {% elif section.type == "quote" %}
+        {{ c.quote_block(section) }}
+      {% elif section.type == "list" %}
+        {{ c.icon_list(section) }}
+      {% endif %}
+    {% endfor %}
+  </main>
+
+  {% if sources %}
+  <footer>
+    <h2>Sources</h2>
+    <ol>
+      {% for src in sources %}
+      <li id="source-{{ src.index }}">
+        <a href="{{ src.url }}" target="_blank" rel="noopener">{{ src.title or src.url }}</a>
+      </li>
+      {% endfor %}
+    </ol>
+  </footer>
+  {% endif %}
+</div>
