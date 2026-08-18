@@ -377,10 +377,56 @@ Runs as a cloud routine (Anthropic CCR), cron in UTC. 10:00 Europe/Bucharest is
 Mar) — **the cron expression does not auto-adjust for the DST switch**, so the
 send time will drift by an hour twice a year until the cron is manually updated.
 
-Cloud routines can't see this repo's local `.env` — secrets are supplied to the
-routine's own session directly (see routine config, not committed anywhere).
+**Intended design (3 routines, one per fire time)** — not yet created, see
+"⚠ Currently blocked" below:
+1. **Results follow-up** — `0 6 * * *` (06:00 UTC = 09:00 EEST). Grades
+   yesterday's bet and sends the threaded recap.
+2. **Ask cotă** — `0 7 * * *` (07:00 UTC = 10:00 EEST). Sends the cotă
+   question with inline buttons; does not block.
+3. **Build & send the bet** — `0 9 * * *` (09:00 UTC = 12:00 EEST). Checks
+   whether the user responded to routine 2 in the intervening two hours; if
+   yes, builds toward their chosen cotă; if no response by this fire, builds
+   toward the 10x default instead. Splitting the "ask" and "build" steps into
+   two separate fires (rather than one routine blocking for up to 2 hours)
+   avoids holding a cloud session open and paying for idle wait time — this
+   was flagged as an open design question earlier and the user's own
+   "default to 10x by noon" rule resolves it cleanly.
+
+**⚠ Currently blocked (confirmed 2026-08-18, both tested live):**
+1. **No repo access for routines.** Creating any routine with this repo as a
+   `git_repository` source fails at creation with `403 "You don't have access
+   to a repository this routine uses"` — the GitHub App that backs Claude Code
+   routines isn't installed/authorized for this repo (`github.com/settings/installations`
+   was empty when checked earlier). This is separate from normal local `git`/`gh`
+   auth, which already works fine for this session's own commits/pushes. The
+   user needs to connect/install the GitHub App via claude.ai's routine or
+   connector settings (possibly gated by plan tier) before a repo-bound
+   routine can be created.
+2. **No safe way to give a routine the API keys.** Even if #1 is fixed, a
+   cloned repo would NOT include `.env` (it's gitignored, correctly). Secrets
+   would need to reach the routine some other way — but embedding
+   `TELEGRAM_BOT_TOKEN`/`API_FOOTBALL_KEY` directly into a routine's stored
+   prompt was tested live and **blocked by the auto-mode safety classifier**
+   (flagged as a risky pattern: a live, retrievable credential written into a
+   stored, reusable config). This is a hard rule, not a bug — it should not
+   and will not be worked around by disguising the token or splitting it
+   across the prompt. The legitimate fix is a proper secrets-injection
+   mechanism at the environment level (if claude.ai's environment settings
+   support attaching secrets as env vars, that would sidestep the "written
+   into a stored prompt" pattern the classifier is reacting to) — this needs
+   to be set up by the user through the web UI, not through this tool access.
+
+**Until both are resolved, these routines cannot be created via this
+session's tool access.** Options for the user: (a) sort out GitHub App /
+routine repo access and check whether claude.ai's environment settings
+support attaching secrets separately from the prompt, then ask again to
+create the three routines above; or (b) create the routines directly through
+https://claude.ai/code/routines, where the web UI may expose a secrets field
+this API-level tool access doesn't have.
+
 Telegram's bot token has no expiry, which removes the token-rotation problem
-the earlier WhatsApp design had.
+the earlier WhatsApp design had — that part of the design is still sound,
+it's the routine plumbing that's blocked.
 
 ## Edge Cases
 
