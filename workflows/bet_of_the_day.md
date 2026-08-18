@@ -402,6 +402,36 @@ send time will drift by an hour twice a year until the cron is manually updated.
    user needs to connect/install the GitHub App via claude.ai's routine or
    connector settings (possibly gated by plan tier) before a repo-bound
    routine can be created.
+   **Troubleshooting trail (2026-08-18), user walked through this live:**
+   - claude.ai's Connectors page (`claude.ai/customize/connectors`) has a
+     "GitHub Integration" row — connecting it only grants an OAuth-level
+     authorization (identity + "know which resources you can access" +
+     "act on your behalf"), confirmed by checking GitHub's own
+     `github.com/settings/installations` → **Authorized GitHub Apps** tab
+     (showed "Claude" by Anthropic, "Never used"). Critically, this does
+     **not** show up under the **Installed GitHub Apps** tab at all — OAuth
+     authorization and GitHub App installation are two different steps, and
+     only the installation step grants actual repository access.
+   - Revoked the stale OAuth grant and reconnected from scratch (also tried
+     triggering it via the routine creator's "Select a repository" picker
+     directly) — both times GitHub's "Claude by Anthropic wants access to
+     your GitHub account" screen appeared, and clicking Authorize redirected
+     straight back to claude.ai's routine editor with **no repository
+     selection / installation screen ever shown**. The install step that
+     should grant per-repo access is simply not being triggered by either
+     entry point tried.
+   - Checked GitHub Marketplace directly (searching "Claude code") as a
+     bypass — no official Anthropic-owned GitHub App is listed there; all
+     19 results were unrelated third-party tools that happen to mention
+     "Claude" in their description. So there's no public Marketplace
+     install link to fall back on either.
+   - **Conclusion: this needs Anthropic support, not more UI troubleshooting.**
+     Either the "Authorize → Install" handoff is broken for this account, or
+     full GitHub App installation for routines is plan-gated and the flow
+     intentionally stops at OAuth-only. Recommended the user file a support
+     ticket with the exact repro: "Claude" shows as an authorized OAuth app
+     (never used) but never completes GitHub App installation, so every
+     routine repository picker shows "No repositories found."
 2. **No safe way to give a routine the API keys.** Even if #1 is fixed, a
    cloned repo would NOT include `.env` (it's gitignored, correctly). Secrets
    would need to reach the routine some other way — but embedding
