@@ -18,8 +18,10 @@ from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-REQUIRED_LEGS = 4
-TARGET_MIN, TARGET_MAX = 8.0, 13.0
+MIN_LEGS, MAX_LEGS = 3, 7
+DEFAULT_TARGET_ODDS = 10.0
+TARGET_TOLERANCE_LOW, TARGET_TOLERANCE_HIGH = 0.8, 1.3  # accept 80%-130% of target
+MAX_ALLOWED_TARGET_ODDS = 100.0
 
 ROMANIAN_MONTHS = [
     "ianuarie", "februarie", "martie", "aprilie", "mai", "iunie",
@@ -44,6 +46,12 @@ def escape_markdown(text):
     return MARKDOWN_SPECIAL_CHARS.sub(r"\\\1", text)
 
 
+VALID_BET_TYPES = {"match_winner", "total_goals", "double_chance", "btts", "correct_score"}
+VALID_SELECTIONS = {"home", "away", "draw"}
+VALID_DOUBLE_CHANCE_SELECTIONS = {"home_or_draw", "away_or_draw", "home_or_away"}
+VALID_BTTS_SELECTIONS = {"yes", "no"}
+
+
 def validate(spec):
     errors = []
 
@@ -55,19 +63,58 @@ def validate(spec):
         errors.append("missing top-level 'picks' list")
         return errors, []
 
-    if len(picks) != REQUIRED_LEGS:
-        errors.append(f"'picks' must contain exactly {REQUIRED_LEGS} legs, got {len(picks)}")
+    if not (MIN_LEGS <= len(picks) <= MAX_LEGS):
+        errors.append(f"'picks' must contain {MIN_LEGS}-{MAX_LEGS} legs, got {len(picks)}")
 
     for i, pick in enumerate(picks):
         if not isinstance(pick, dict):
             errors.append(f"picks[{i}] must be an object")
             continue
-        for field in ("match", "market", "pick", "odds", "rationale"):
+        for field in ("match", "home_team", "away_team", "fixture_id", "league_id", "market",
+                      "bet_type", "selection", "pick", "odds", "rationale"):
             if field not in pick or pick[field] in (None, ""):
                 errors.append(f"picks[{i}] missing '{field}'")
         odds = pick.get("odds")
         if odds is not None and (not isinstance(odds, (int, float)) or odds <= 1.0):
             errors.append(f"picks[{i}].odds must be a number > 1.0, got {odds!r}")
+
+        bet_type = pick.get("bet_type")
+        selection = pick.get("selection")
+        if bet_type is not None and bet_type not in VALID_BET_TYPES:
+            errors.append(f"picks[{i}].bet_type must be one of {sorted(VALID_BET_TYPES)}, got {bet_type!r}")
+        elif bet_type == "match_winner":
+            if selection not in VALID_SELECTIONS:
+                errors.append(
+                    f"picks[{i}].selection must be one of {sorted(VALID_SELECTIONS)} "
+                    f"for bet_type 'match_winner', got {selection!r}"
+                )
+        elif bet_type == "total_goals":
+            if not isinstance(selection, dict) or selection.get("side") not in ("over", "under") \
+                    or not isinstance(selection.get("line"), (int, float)):
+                errors.append(
+                    f"picks[{i}].selection must be {{'side': 'over'|'under', 'line': number}} "
+                    f"for bet_type 'total_goals', got {selection!r}"
+                )
+        elif bet_type == "double_chance":
+            if selection not in VALID_DOUBLE_CHANCE_SELECTIONS:
+                errors.append(
+                    f"picks[{i}].selection must be one of {sorted(VALID_DOUBLE_CHANCE_SELECTIONS)} "
+                    f"for bet_type 'double_chance', got {selection!r}"
+                )
+        elif bet_type == "btts":
+            if selection not in VALID_BTTS_SELECTIONS:
+                errors.append(
+                    f"picks[{i}].selection must be one of {sorted(VALID_BTTS_SELECTIONS)} "
+                    f"for bet_type 'btts', got {selection!r}"
+                )
+        elif bet_type == "correct_score":
+            if not isinstance(selection, dict) \
+                    or not isinstance(selection.get("home"), int) or selection.get("home") < 0 \
+                    or not isinstance(selection.get("away"), int) or selection.get("away") < 0:
+                errors.append(
+                    f"picks[{i}].selection must be {{'home': int >= 0, 'away': int >= 0}} "
+                    f"for bet_type 'correct_score', got {selection!r}"
+                )
 
     return errors, picks
 
@@ -81,8 +128,17 @@ def format_pick_block(index, pick):
 def main():
     parser = argparse.ArgumentParser(description="Validate picks and prepare the Telegram message.")
     parser.add_argument("--picks-spec", required=True, help="Path to the picks-spec JSON.")
+    parser.add_argument(
+        "--target-odds", type=float, default=DEFAULT_TARGET_ODDS,
+        help=f"Target combined odds (e.g. from the user's cotă choice). Default: {DEFAULT_TARGET_ODDS}.",
+    )
     parser.add_argument("--output", default=None, help="Output path. Default: .tmp/bet_params_<date>.json")
     args = parser.parse_args()
+
+    if args.target_odds > MAX_ALLOWED_TARGET_ODDS:
+        fail(f"--target-odds {args.target_odds} exceeds the maximum allowed ({MAX_ALLOWED_TARGET_ODDS}x).")
+    if args.target_odds <= 1.0:
+        fail(f"--target-odds must be > 1.0, got {args.target_odds}.")
 
     spec_path = Path(args.picks_spec)
     if not spec_path.is_absolute():
@@ -104,10 +160,13 @@ def main():
         combined_odds *= pick["odds"]
     combined_odds = round(combined_odds, 2)
 
-    if not (TARGET_MIN <= combined_odds <= TARGET_MAX):
+    target_min = round(args.target_odds * TARGET_TOLERANCE_LOW, 2)
+    target_max = round(args.target_odds * TARGET_TOLERANCE_HIGH, 2)
+    if not (target_min <= combined_odds <= target_max):
         warn(
-            f"Combined odds {combined_odds}x is outside the {TARGET_MIN}x-{TARGET_MAX}x "
-            "target range — shipping anyway, but consider adjusting a leg."
+            f"Combined odds {combined_odds}x is outside the {target_min}x-{target_max}x "
+            f"range for the requested {args.target_odds}x target — shipping anyway, "
+            "but consider adjusting a leg."
         )
 
     date_str = spec["date"]
@@ -129,6 +188,7 @@ def main():
 
     result = {
         "date": date_str,
+        "target_odds": args.target_odds,
         "combined_odds": combined_odds,
         "picks": picks,
         "telegram_message": telegram_message,

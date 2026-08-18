@@ -34,7 +34,7 @@ class SendError(Exception):
     pass
 
 
-def send_message(token, chat_id, text):
+def send_message(token, chat_id, text, reply_to_message_id=None):
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {
         "chat_id": chat_id,
@@ -42,6 +42,9 @@ def send_message(token, chat_id, text):
         "parse_mode": "Markdown",
         "disable_web_page_preview": True,
     }
+    if reply_to_message_id:
+        payload["reply_to_message_id"] = reply_to_message_id
+        payload["allow_sending_without_reply"] = True
 
     attempt = 0
     while True:
@@ -72,6 +75,10 @@ def send_message(token, chat_id, text):
 def main():
     parser = argparse.ArgumentParser(description="Send the Bet of the Day message via Telegram.")
     parser.add_argument("--params-file", required=True, help="Path to prepare_bet_slip.py's output JSON.")
+    parser.add_argument(
+        "--output", default=None,
+        help="Where to record sent message ids (for tomorrow's reply). Default: .tmp/telegram_sent_<date>.json",
+    )
     args = parser.parse_args()
 
     load_dotenv(REPO_ROOT / ".env")
@@ -99,18 +106,36 @@ def main():
     if not message:
         fail("Params file missing 'telegram_message'.")
 
+    # Optional: {"880474256": 4, ...} — reply in-thread to yesterday's message
+    # per chat id (message ids are scoped per chat, not global).
+    reply_to_message_ids = data.get("reply_to_message_ids") or {}
+
+    sent_message_ids = {}
     succeeded, failed = [], []
     for chat_id in chat_ids:
         try:
-            result = send_message(token, chat_id, message)
+            reply_id = reply_to_message_ids.get(chat_id) or reply_to_message_ids.get(str(chat_id))
+            result = send_message(token, chat_id, message, reply_to_message_id=reply_id)
             message_id = result.get("result", {}).get("message_id")
-            print(f"Sent to {chat_id}: message_id={message_id}")
+            print(f"Sent to {chat_id}: message_id={message_id}" + (f" (reply to {reply_id})" if reply_id else ""))
             succeeded.append(chat_id)
+            sent_message_ids[chat_id] = message_id
         except SendError as exc:
             print(f"FAILED to send to {chat_id}: {exc}", file=sys.stderr)
             failed.append(chat_id)
 
     print(f"Delivered to {len(succeeded)}/{len(chat_ids)} recipient(s).")
+
+    date_str = data.get("date", "unknown")
+    output_path = Path(args.output) if args.output else REPO_ROOT / ".tmp" / f"telegram_sent_{date_str}.json"
+    if not output_path.is_absolute():
+        output_path = REPO_ROOT / output_path
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps({"date": date_str, "sent_message_ids": sent_message_ids}, indent=2), encoding="utf-8"
+    )
+    print(f"Saved sent message ids to: {output_path}")
+
     if failed:
         sys.exit(1)
 
