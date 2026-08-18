@@ -4,8 +4,8 @@
 
 Every morning at 10:00 Europe/Bucharest, build a ~10x combined (accumulator) football
 bet from that day's most important matches across the top leagues, with a short,
-specific rationale per pick, and send it as a WhatsApp message via the Meta WhatsApp
-Cloud API.
+specific rationale per pick, and send it as a Telegram message via the Telegram
+Bot API.
 
 This runs as an unattended **cloud routine** (see "Scheduling" below) — there is no
 human in the loop each morning, so the agent must make a reasonable call on edge
@@ -14,12 +14,13 @@ cases (thin fixture list, can't hit 10x cleanly, etc.) rather than stalling.
 ## Required Inputs / Secrets (in `.env`)
 
 - `ODDS_API_KEY` — from https://the-odds-api.com (free tier: 500 credits/month).
-- `WHATSAPP_TOKEN` — Meta Cloud API access token.
-- `WHATSAPP_PHONE_NUMBER_ID` — the sending number's phone_number_id (Meta's free
-  developer test number is fine for a single-recipient personal bot).
-- `WHATSAPP_RECIPIENT` — recipient's E.164 number, no leading `+` (e.g. `40712345678`).
-  Must be added as a verified recipient under the Meta test number during development.
-- `WHATSAPP_TEMPLATE_NAME` — the approved template name (default assumed: `bet_of_the_day`).
+- `TELEGRAM_BOT_TOKEN` — from @BotFather (see "Telegram Bot Setup" below).
+- `TELEGRAM_CHAT_IDS` — comma-separated chat ids, one per recipient (or a single
+  group chat id for multiple people at once).
+
+Unlike the earlier WhatsApp design, there is **no template approval step** and
+**no token expiry** to manage — a bot token from @BotFather is permanent until
+manually revoked, and messages can be sent free-form at any time.
 
 ## Tools Used
 
@@ -27,9 +28,10 @@ cases (thin fixture list, can't hit 10x cleanly, etc.) rather than stalling.
   over/under 2.5) for the top European leagues from The Odds API.
 - `tools/prepare_bet_slip.py` — validates an agent-authored picks JSON (exactly 4
   legs), computes the combined odds deterministically (product of decimal odds —
-  never trust the agent's arithmetic here), and formats the WhatsApp template
-  parameters.
-- `tools/send_whatsapp.py` — sends the filled template via the Meta Graph API.
+  never trust the agent's arithmetic here), and formats the final Telegram
+  message (Markdown, escaped, ready to send).
+- `tools/send_telegram.py` — posts the message to every configured chat id via
+  the Telegram Bot API, best-effort (one recipient failing doesn't block others).
 
 The **selection of which games matter and which markets to bet** is deliberately
 *not* a tool — that's judgment (league prestige, table position, derbies, news),
@@ -80,69 +82,53 @@ check on team news if anything looks stale.
    Exactly 4 picks. The message is sent in **Romanian** — write `pick` (e.g. team
    name, or `Sub 2.5`/`Peste 2.5` for totals markets) and `rationale` in Romanian;
    `match` keeps the real team names as-is. Each `rationale` should be one
-   concrete sentence (~120 chars max — it becomes one line of a WhatsApp message,
-   keep it tight).
+   concrete sentence — Telegram has no hard length limit like the old WhatsApp
+   template params did, but keep it to roughly one line for readability.
 
 5. **Prepare the bet slip.** Run
    `tools/prepare_bet_slip.py --picks-spec .tmp/bet_spec_<date>.json --output .tmp/bet_params_<date>.json`.
    This validates the spec, computes combined odds itself (product of the 4 `odds`
-   values — the source of truth, not whatever the agent calculated), and warns to
-   stderr if outside the 8x–13x range. On a validation error, fix the spec and
-   retry — this is expected iteration.
+   values — the source of truth, not whatever the agent calculated), warns to
+   stderr if outside the 8x–13x range, and builds the final formatted
+   `telegram_message` (Markdown, with team names/rationale escaped so a stray
+   `_` or `*` in team names can't break formatting). On a validation error, fix
+   the spec and retry — this is expected iteration.
 
 6. **Send it.** Run
-   `tools/send_whatsapp.py --params-file .tmp/bet_params_<date>.json`.
-   Reads `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` / `WHATSAPP_RECIPIENT` /
-   `WHATSAPP_TEMPLATE_NAME` from `.env`.
+   `tools/send_telegram.py --params-file .tmp/bet_params_<date>.json`.
+   Reads `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_IDS` from `.env` and sends to
+   every chat id, best-effort.
 
 7. **Report back** (in the routine's session, since there's no user watching live):
-   the 4 picks, combined odds, and confirmation the WhatsApp send succeeded
-   (message id) or the specific API error if it didn't.
+   the 4 picks, combined odds, and per-recipient delivery status (message ids or
+   the specific error for any that failed).
 
 ## Output
 
-- A WhatsApp message to `WHATSAPP_RECIPIENT` using the `bet_of_the_day` template.
+- A Telegram message to every id in `TELEGRAM_CHAT_IDS`.
 - `.tmp/bet_spec_<date>.json` and `.tmp/bet_params_<date>.json` (disposable,
   regenerated daily).
 
-## WhatsApp Template (submit once via Meta Business Manager, manual step)
+## Telegram Bot Setup (one-time, manual)
 
-Meta requires proactive (non-session) messages to use a pre-approved template.
-Submit this once under WhatsApp > Message Templates:
+1. Open Telegram, search for **@BotFather** (official, verified).
+2. Send `/newbot`, follow the prompts (pick a display name and a username
+   ending in `bot`).
+3. BotFather replies with a token like `123456789:ABCdefGHIjklMNOpqrsTUVwxyz` —
+   that's `TELEGRAM_BOT_TOKEN`. Paste it directly into `.env`, not into chat.
+4. **Getting chat id(s):**
+   - Single recipient: message your new bot anything from your own Telegram
+     account, then visit `https://api.telegram.org/bot<TOKEN>/getUpdates` in a
+     browser — the response JSON has `"chat":{"id": NUMBER}`. That number is
+     your chat id.
+   - Multiple recipients: either have each person message the bot once and
+     collect each id the same way, or create a Telegram **group**, add the bot
+     to it, send a message in the group, and use the group's chat id (a
+     negative number) instead — simpler for more than a couple of people.
+5. Put the id(s) in `.env` as `TELEGRAM_CHAT_IDS=id1,id2,...` (comma-separated,
+   no spaces needed).
 
-- **Name:** `bet_of_the_day`
-- **Category:** Utility (try Utility first; if Meta rejects it, resubmit as Marketing)
-- **Language:** Romanian (`ro`)
-- **Body:**
-  ```
-  🎯 *Biletul Zilei* — {{1}}
-
-  1️⃣ {{2}}
-  💬 {{3}}
-
-  2️⃣ {{4}}
-  💬 {{5}}
-
-  3️⃣ {{6}}
-  💬 {{7}}
-
-  4️⃣ {{8}}
-  💬 {{9}}
-
-  💰 Cotă combinată: *{{10}}x*
-
-  🔞 Pronosticuri generate de AI, doar pentru divertisment. Nu reprezintă sfaturi financiare — joacă responsabil.
-  ```
-- **Params, in order (10 total):** date (e.g. `17 august 2026`), then for each of
-  the 4 games a pair — pick line (e.g. `Arsenal @ 1.85 — Arsenal vs Chelsea`)
-  immediately followed by its comment (e.g. `Neînvinsă în ultimele 8 meciuri
-  acasă; Chelsea fără 2 fundași centrali titulari.`) — and finally the combined
-  odds (e.g. `10.24`). The pick line stays odds/teams only; the *why* lives in
-  its own comment slot right after it.
-
-`tools/prepare_bet_slip.py` outputs parameters in exactly this order (date,
-[pick, comment] × 4, combined odds).
-`tools/send_whatsapp.py` defaults `--language` to `ro` to match.
+No approval process, no expiry — this is a one-time setup.
 
 ## Scheduling
 
@@ -153,27 +139,37 @@ send time will drift by an hour twice a year until the cron is manually updated.
 
 Cloud routines can't see this repo's local `.env` — secrets are supplied to the
 routine's own session directly (see routine config, not committed anywhere).
+Telegram's bot token has no expiry, which removes the token-rotation problem
+the earlier WhatsApp design had.
 
 ## Edge Cases
 
 - **Fewer than 4 credible fixtures anywhere in the fallback league set** — extremely
   rare (there's almost always *some* football somewhere). If it truly happens, send
-  fewer legs and note the deviation in the rationale for pick 1, since the template
-  has fixed slots — do not fabricate a 4th pick.
+  fewer legs and note the deviation in the first pick's rationale rather than
+  fabricating a 4th pick.
 - **Can't reach 8x-13x with defensible picks** — ship the closest defensible
   combination rather than forcing weak/unjustifiable picks onto the target number.
 - **The Odds API credit exhausted / 401 / 429** — the tool fails loudly; don't
   fabricate odds. If this happens, note it's likely a free-tier credit exhaustion
   (500/month) and consider reducing the default league list or polling frequency.
-- **WhatsApp send fails (template not approved yet, number not verified, token
-  expired)** — `send_whatsapp.py` surfaces the Graph API's error message directly;
-  don't retry blindly, the fix is almost always in Meta's dashboard, not the code.
-- **Meta test-number access tokens expire in ~24h** unless exchanged for a
-  long-lived/System User token — if sends start failing with an auth error after
-  working previously, this is the first thing to check.
+- **Telegram send fails for a chat id** — `send_telegram.py` sends best-effort to
+  every id and reports per-recipient success/failure; a 403 usually means that
+  user blocked the bot or never started a conversation with it (they need to
+  message it once first — bots can't message a user who hasn't initiated contact).
 
 ## Learnings
 
+- **Switched from WhatsApp Cloud API to Telegram Bot API (2026-08-18).** The
+  WhatsApp path required Meta Business verification, pre-approved message
+  templates (fixed positional parameters, multi-hour/day review turnaround),
+  and access tokens that expire in ~24h unless exchanged for a System User
+  token — a lot of moving parts and external dependencies for a personal
+  automation. Telegram needs none of that: a bot token from @BotFather never
+  expires, messages are free-form (no template review), and formatting is a
+  single Markdown-escaped string instead of juggling 10 positional template
+  slots. If WhatsApp's reach/UX is ever specifically needed again, the old
+  design is recoverable from git history, but Telegram is the default now.
 - **Don't trust a stat from a single betting-preview/tipster site.** A first pass
   on 2026-08-17 pulled "Benfica unbeaten in 50 straight Primeira Liga games" from
   a search that surfaced mostly programmatic prediction sites (sportskeeda,
@@ -192,5 +188,5 @@ routine's own session directly (see routine config, not committed anywhere).
   not a fact to repeat. This matters more here than in a normal research task
   because the routine runs unattended — there's no human in the loop each
   morning to catch a bad stat before it goes out.
-- (Populate further as the routine runs — rate-limit quirks, template-approval
-  turnaround time, which leagues reliably have odds posted by 10am local, etc.)
+- (Populate further as the routine runs — rate-limit quirks, which leagues
+  reliably have odds posted by 10am local, etc.)

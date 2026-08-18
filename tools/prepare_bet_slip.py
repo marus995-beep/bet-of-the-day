@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate an agent-authored picks JSON and prepare WhatsApp template parameters.
+"""Validate an agent-authored picks JSON and prepare the Telegram message.
 
 Computes combined odds itself (product of the 4 legs' decimal odds) — this is
 the source of truth, not whatever arithmetic the agent did when drafting picks.
@@ -12,6 +12,7 @@ Usage:
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -19,12 +20,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_LEGS = 4
 TARGET_MIN, TARGET_MAX = 8.0, 13.0
-MAX_LINE_LEN = 220  # WhatsApp template body params: keep each line short/legible
 
 ROMANIAN_MONTHS = [
     "ianuarie", "februarie", "martie", "aprilie", "mai", "iunie",
     "iulie", "august", "septembrie", "octombrie", "noiembrie", "decembrie",
 ]
+
+# Telegram legacy Markdown special chars that need escaping in dynamic text
+# (team names, rationale) so a stray "_" or "*" doesn't break formatting.
+MARKDOWN_SPECIAL_CHARS = re.compile(r"([_*`\[])")
 
 
 def fail(message):
@@ -34,6 +38,10 @@ def fail(message):
 
 def warn(message):
     print(f"WARNING: {message}", file=sys.stderr)
+
+
+def escape_markdown(text):
+    return MARKDOWN_SPECIAL_CHARS.sub(r"\\\1", text)
 
 
 def validate(spec):
@@ -64,23 +72,14 @@ def validate(spec):
     return errors, picks
 
 
-def clip(text, label):
-    if len(text) > MAX_LINE_LEN:
-        warn(f"{label} exceeds {MAX_LINE_LEN} chars, truncating: {text[:60]}...")
-        text = text[: MAX_LINE_LEN - 1].rstrip() + "…"
-    return text
-
-
-def format_pick_line(pick):
-    return clip(f"{pick['pick']} @ {pick['odds']} — {pick['match']}", "Pick line")
-
-
-def format_comment_line(pick):
-    return clip(pick["rationale"], "Comment line")
+def format_pick_block(index, pick):
+    pick_line = f"{index}⃣ {escape_markdown(pick['pick'])} @ {pick['odds']} — {escape_markdown(pick['match'])}"
+    comment_line = f"\U0001F4AC {escape_markdown(pick['rationale'])}"
+    return f"{pick_line}\n{comment_line}"
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Validate picks and prepare WhatsApp template params.")
+    parser = argparse.ArgumentParser(description="Validate picks and prepare the Telegram message.")
     parser.add_argument("--picks-spec", required=True, help="Path to the picks-spec JSON.")
     parser.add_argument("--output", default=None, help="Output path. Default: .tmp/bet_params_<date>.json")
     args = parser.parse_args()
@@ -118,21 +117,21 @@ def main():
     except ValueError:
         date_display = date_str
 
-    pick_lines = [format_pick_line(p) for p in picks]
-    comment_lines = [format_comment_line(p) for p in picks]
+    pick_blocks = [format_pick_block(i, p) for i, p in enumerate(picks, start=1)]
 
-    # Interleaved so each game's line is immediately followed by its comment,
-    # matching the template body's alternating {{pick}} / {{comment}} slots.
-    whatsapp_params = [date_display]
-    for pick_line, comment_line in zip(pick_lines, comment_lines):
-        whatsapp_params += [pick_line, comment_line]
-    whatsapp_params += [f"{combined_odds:.2f}"]
+    telegram_message = (
+        f"\U0001F3AF *Biletul Zilei* — {date_display}\n\n"
+        + "\n\n".join(pick_blocks)
+        + f"\n\n\U0001F4B0 Cotă combinată: *{combined_odds:.2f}x*"
+        + "\n\n\U0001F51E Pronosticuri generate de AI, doar pentru divertisment. "
+        "Nu reprezintă sfaturi financiare — joacă responsabil."
+    )
 
     result = {
         "date": date_str,
         "combined_odds": combined_odds,
         "picks": picks,
-        "whatsapp_params": whatsapp_params,
+        "telegram_message": telegram_message,
     }
 
     output_path = Path(args.output) if args.output else REPO_ROOT / ".tmp" / f"bet_params_{date_str}.json"
@@ -143,9 +142,8 @@ def main():
 
     print(f"Saved bet slip to: {output_path}")
     print(f"Combined odds: {combined_odds}x")
-    for pick_line, comment_line in zip(pick_lines, comment_lines):
-        print(f"  - {pick_line}")
-        print(f"      → {comment_line}")
+    print("---")
+    print(telegram_message)
 
 
 if __name__ == "__main__":
