@@ -143,6 +143,8 @@ def main():
     parser.add_argument("--date", default=None, help="Target date YYYY-MM-DD (Europe/Bucharest). Default: today.")
     parser.add_argument("--max-fetches", type=int, default=MAX_DETAIL_FETCHES,
                          help=f"Cap on detail-page fetches per run. Default: {MAX_DETAIL_FETCHES}.")
+    parser.add_argument("--no-fallback-date", action="store_true",
+                         help="Don't fall back to the nearest published date if --date has no picks.")
     parser.add_argument("--output", default=None, help="Output JSON path. Default: .tmp/pariurix/predictions-<date>.json")
     args = parser.parse_args()
 
@@ -155,15 +157,28 @@ def main():
     listing_html = fetch_page(LISTING_URL)
     events = parse_listing(listing_html)
 
-    matching = [e for e in events if e.get("startDate", "")[:10] == target_date.isoformat()]
     available_dates = sorted(set(e["startDate"][:10] for e in events if "startDate" in e))
+    requested_date = target_date.isoformat()
+    matching = [e for e in events if e.get("startDate", "")[:10] == requested_date]
+
+    if not matching and not args.no_fallback_date:
+        # Tips are typically published a day or more ahead of kickoff, so
+        # "today" is often empty — fall back to the nearest LATER published
+        # date rather than silently returning nothing every morning.
+        future_dates = [d for d in available_dates if d > requested_date]
+        if future_dates:
+            target_date = date_cls.fromisoformat(future_dates[0])
+            warn(
+                f"No pariurix picks for {requested_date} — falling back to the nearest "
+                f"published date, {target_date.isoformat()}."
+            )
+            matching = [e for e in events if e.get("startDate", "")[:10] == target_date.isoformat()]
 
     if not matching:
         warn(
-            f"No pariurix picks found for {target_date.isoformat()}. Dates currently "
-            f"published on pariurix.com: {available_dates or '(none found)'}. Tips seem to "
-            "be published a day or more ahead of kickoff — this is expected, not a bug; "
-            "the caller should decide whether to use a different date or skip this source today."
+            f"No pariurix picks found for {requested_date} (or any later date, if fallback "
+            f"was allowed). Dates currently published on pariurix.com: "
+            f"{available_dates or '(none found)'}."
         )
 
     predictions = []
@@ -210,6 +225,8 @@ def main():
 
     result = {
         "date": target_date.isoformat(),
+        "date_requested": requested_date,
+        "used_fallback_date": target_date.isoformat() != requested_date,
         "generated_at": datetime.now(ROMANIA_TZ).isoformat(),
         "source": "pariurix.com",
         "sourcing_note": (
@@ -234,8 +251,10 @@ def main():
     output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"Saved {len(predictions)} pariurix prediction(s) to: {output_path}")
+    if result["used_fallback_date"]:
+        print(f"Note: requested {requested_date} had no picks; used {target_date.isoformat()} instead.")
     if not matching:
-        print(f"No picks for {target_date.isoformat()} — available dates were: {available_dates}")
+        print(f"No picks found at all — available dates were: {available_dates}")
 
 
 if __name__ == "__main__":
