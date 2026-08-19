@@ -74,6 +74,7 @@ def find_combination(predictions, target_odds, max_attempts, rng):
         combined = combined_odds(sample)
 
         if target_min <= combined <= target_max:
+            rng.shuffle(sample)  # belt-and-suspenders: display order is never tied to source order
             return sample, combined, True
 
         # distance in log-space so a 2x-too-high miss and a 2x-too-low miss count equally
@@ -81,6 +82,8 @@ def find_combination(predictions, target_odds, max_attempts, rng):
         if distance < best_distance:
             best_picks, best_combined, best_distance = sample, combined, distance
 
+    if best_picks is not None:
+        rng.shuffle(best_picks)
     return best_picks, best_combined, False
 
 

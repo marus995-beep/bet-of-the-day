@@ -134,7 +134,7 @@ def main():
         f"\U0001F3AF *Biletul Zilei* — {date_display_str}\n\n"
         + "\n\n".join(pick_blocks)
         + f"\n\n\U0001F4B0 Cotă combinată: *{combined:.2f}x*"
-        + "\n\n\U0001F51E Pronosticuri generate de AI, doar pentru divertisment. "
+        + "\n\n\U0001F51E Pronosticuri generate doar pentru divertisment. "
         "Nu reprezintă sfaturi financiare — joacă responsabil."
     )
 
