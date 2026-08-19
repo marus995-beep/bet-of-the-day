@@ -105,7 +105,7 @@ def strip_html(fragment):
     return re.sub(r"\s+", " ", text).strip()
 
 
-def extract_detail(detail_html):
+def extract_detail(detail_html, home_team=None, away_team=None):
     pick, tipster, odds, bookmaker, analysis = None, None, None, None, None
 
     m = re.search(r'<meta name="description" content="(.*?)"', detail_html, re.S)
@@ -134,6 +134,13 @@ def extract_detail(detail_html):
     )
     if m5:
         analysis = strip_html(m5.group(1))
+        # the section's own <h2> heading ("Analiză și informații pentru X v Y")
+        # is redundant once the match is already shown elsewhere — drop it,
+        # using the known team names for an exact (not heuristic) match.
+        if home_team and away_team:
+            heading = f"Analiză și informații pentru {home_team} v {away_team}"
+            if analysis.startswith(heading):
+                analysis = analysis[len(heading):].strip()
 
     return pick, tipster, odds, bookmaker, analysis
 
@@ -184,15 +191,15 @@ def main():
             warn(f"Could not fetch detail page for {event.get('name')!r} — skipping.")
             continue
 
-        pick, tipster, odds, bookmaker, analysis = extract_detail(detail_html)
+        competitors = event.get("competitor", [])
+        home_team = competitors[0]["name"] if len(competitors) > 0 else None
+        away_team = competitors[1]["name"] if len(competitors) > 1 else None
+
+        pick, tipster, odds, bookmaker, analysis = extract_detail(detail_html, home_team, away_team)
         if pick is None or odds is None:
             warn(f"Could not extract pick/odds for {event.get('name')!r} from its detail page — skipping "
                  "(page structure may not match what this scraper expects).")
             continue
-
-        competitors = event.get("competitor", [])
-        home_team = competitors[0]["name"] if len(competitors) > 0 else None
-        away_team = competitors[1]["name"] if len(competitors) > 1 else None
 
         predictions.append({
             "match": event.get("name"),
