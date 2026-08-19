@@ -10,6 +10,11 @@ within tolerance of --target-odds, or the closest one found after
 (product of each leg's cotă) — randomness only decides which legs are in the
 bet, never the arithmetic.
 
+Two hard constraints on the candidate pool: no single leg's odds may exceed
+MAX_LEG_ODDS (2.99), and there's a floor of MIN_LEGS (3) but deliberately no
+ceiling — a 100x target built only from sub-3.00 legs needs however many legs
+that actually takes (e.g. ~8-9 legs at ~1.8 average), not a fixed 3-7 range.
+
 Does NOT build the Telegram message. Each leg's full "analysis_raw" (the
 tipster's own words, untruncated) is carried through in the output — the
 agent should read it and write a short, original rephrasing per leg (not a
@@ -28,7 +33,8 @@ import sys
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-MIN_LEGS, MAX_LEGS = 3, 7
+MIN_LEGS = 3  # no upper cap — a 100x target with modest per-leg odds needs as many legs as it takes
+MAX_LEG_ODDS = 2.99  # never use a single pick priced above this
 DEFAULT_TARGET_ODDS = 10.0
 TARGET_TOLERANCE_LOW, TARGET_TOLERANCE_HIGH = 0.8, 1.3
 MAX_ALLOWED_TARGET_ODDS = 100.0
@@ -59,7 +65,7 @@ def find_combination(predictions, target_odds, max_attempts, rng):
     target_max = target_odds * TARGET_TOLERANCE_HIGH
 
     best_picks, best_combined, best_distance = None, None, float("inf")
-    upper = min(MAX_LEGS, len(predictions))
+    upper = len(predictions)
     lower = min(MIN_LEGS, upper)
 
     for _ in range(max_attempts):
@@ -105,14 +111,19 @@ def main():
     except json.JSONDecodeError as exc:
         fail(f"Predictions file is not valid JSON: {exc}")
 
-    predictions = data.get("predictions") or []
+    all_predictions = data.get("predictions") or []
     date_str = data.get("date")
+
+    predictions = [p for p in all_predictions if p.get("odds") is not None and p["odds"] <= MAX_LEG_ODDS]
+    excluded = len(all_predictions) - len(predictions)
+    if excluded:
+        warn(f"Excluded {excluded} prediction(s) priced above {MAX_LEG_ODDS:.2f}x — never used as a leg.")
 
     if len(predictions) < MIN_LEGS:
         fail(
-            f"Only {len(predictions)} pariurix prediction(s) available for {date_str} "
-            f"— need at least {MIN_LEGS} to build a bet. Re-run fetch_pariurix_predictions.py "
-            "for a date pariurix has actually published picks for."
+            f"Only {len(predictions)} pariurix prediction(s) available for {date_str} with odds "
+            f"<= {MAX_LEG_ODDS:.2f}x — need at least {MIN_LEGS} to build a bet. Re-run "
+            "fetch_pariurix_predictions.py for a date pariurix has actually published picks for."
         )
 
     rng = random.Random(args.seed)
@@ -147,7 +158,7 @@ def main():
     print(f"Saved pariurix selection to: {output_path}")
     print(f"Combined odds: {combined}x (within tolerance: {within_tolerance})")
     for i, p in enumerate(picks, start=1):
-        print(f"  {i}. {p['pick']} @ {p['odds']:g} — {p['match']}")
+        print(f"  {i}. {p['pick']} @ {p['odds']:.2f} — {p['match']}")
     print("Next: write a short, original rephrasing of each leg's analysis_raw, "
           "then run finalize_pariurix_message.py.")
 
