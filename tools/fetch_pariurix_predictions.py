@@ -44,9 +44,18 @@ day's games. Pass --allow-fallback-date to opt into substituting the nearest
 later published date instead (useful for manual testing, not used in the
 daily routine, since "today's bet" must actually be today's games).
 
+CACHED BY DEFAULT: if a predictions file already exists at the resolved
+--output path (or the default .tmp/pariurix/predictions-<date>.json) and its
+"date" field matches what was requested, this reads that instead of hitting
+pariurix.com again — the site only gets scraped once per date. Multiple bets
+generated the same day (retries, re-runs, future "regenerate" flows) all
+read the same stored file rather than each triggering a fresh scrape. Pass
+--force-refetch to bypass this and pull fresh data anyway.
+
 Usage:
     python tools/fetch_pariurix_predictions.py [--date 2026-08-21] \
-        [--max-fetches 20] [--allow-fallback-date] [--output .tmp/pariurix/predictions-2026-08-21.json]
+        [--max-fetches 20] [--allow-fallback-date] [--force-refetch] \
+        [--output .tmp/pariurix/predictions-2026-08-21.json]
 """
 
 import argparse
@@ -192,6 +201,8 @@ def main():
     parser.add_argument("--allow-fallback-date", action="store_true",
                          help="Fall back to the nearest published date if --date has no picks. "
                               "Off by default — the caller gets strictly --date's games or nothing.")
+    parser.add_argument("--force-refetch", action="store_true",
+                         help="Ignore any cached predictions file for this date and hit pariurix.com again.")
     parser.add_argument("--output", default=None, help="Output JSON path. Default: .tmp/pariurix/predictions-<date>.json")
     args = parser.parse_args()
 
@@ -200,8 +211,23 @@ def main():
         if args.date
         else datetime.now(ROMANIA_TZ).date()
     )
-
     requested_date = target_date.isoformat()
+
+    output_path = Path(args.output) if args.output else REPO_ROOT / ".tmp" / "pariurix" / f"predictions-{requested_date}.json"
+    if not output_path.is_absolute():
+        output_path = REPO_ROOT / output_path
+
+    if output_path.exists() and not args.force_refetch:
+        try:
+            cached = json.loads(output_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            cached = None
+        if cached and cached.get("date") == requested_date:
+            print(f"Using cached predictions already stored at: {output_path} "
+                  f"({cached.get('prediction_count', 0)} prediction(s), fetched {cached.get('generated_at')}). "
+                  "Not hitting pariurix.com again — pass --force-refetch to override.")
+            return
+
     matching, available_dates = collect_events_for_date(requested_date, MAX_LISTING_PAGES)
 
     if not matching and args.allow_fallback_date:
@@ -301,9 +327,6 @@ def main():
         "predictions": predictions,
     }
 
-    output_path = Path(args.output) if args.output else REPO_ROOT / ".tmp" / "pariurix" / f"predictions-{target_date.isoformat()}.json"
-    if not output_path.is_absolute():
-        output_path = REPO_ROOT / output_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 
