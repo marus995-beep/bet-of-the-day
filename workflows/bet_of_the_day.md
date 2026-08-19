@@ -159,12 +159,15 @@ pre-fetching several days ahead or testing arbitrary past dates.
 ## Steps
 
 0. **Ask for the desired cotă.** Run
-   `tools/collect_cota_choice.py --chat-id <primary chat id> --date <date> --output .tmp/cota_choice_<date>.json`.
-   This sends the question and waits for the real response — don't proceed
-   until it returns (or times out; see Edge Cases). The resulting
-   `chosen_cota` value becomes `--target-odds` in step 5. If it times out,
-   fall back to the default target (10x) rather than blocking the whole run
-   indefinitely — see Edge Cases.
+   `tools/collect_cota_choice.py --chat-id <primary chat id> --date <date> --max-wait-seconds 7200 --output .tmp/cota_choice_<date>.json`
+   (the cloud routine uses a 2-hour window, matching the 10:00→12:00 rule; a
+   shorter wait is fine for manual/interactive runs). This sends the question
+   and blocks until the real response arrives — proceed to step 1 **the
+   instant it returns**, don't wait for any later fixed time. The resulting
+   `chosen_cota` value becomes `--target-odds` in step 5. On timeout, the
+   tool exits successfully with `chosen_cota: null` — in that case, skip
+   `--target-odds` entirely in step 5 and let `prepare_bet_slip.py` use its
+   own 10x default; see Edge Cases.
 
 1. **Fetch odds.** Run `tools/fetch_football_odds.py --output .tmp/odds/odds-<date>.json`.
    Only fetches **today's** fixtures — API-Football's free plan only allows
@@ -377,93 +380,72 @@ Runs as a cloud routine (Anthropic CCR), cron in UTC. 10:00 Europe/Bucharest is
 Mar) — **the cron expression does not auto-adjust for the DST switch**, so the
 send time will drift by an hour twice a year until the cron is manually updated.
 
-**Intended design (3 routines, one per fire time)** — not yet created, see
-"⚠ Currently blocked" below:
-1. **Results follow-up** — `0 6 * * *` (06:00 UTC = 09:00 EEST). Grades
-   yesterday's bet and sends the threaded recap.
-2. **Ask cotă** — `0 7 * * *` (07:00 UTC = 10:00 EEST). Sends the cotă
-   question with inline buttons; does not block.
-3. **Build & send the bet** — `0 9 * * *` (09:00 UTC = 12:00 EEST). Checks
-   whether the user responded to routine 2 in the intervening two hours; if
-   yes, builds toward their chosen cotă; if no response by this fire, builds
-   toward the 10x default instead. Splitting the "ask" and "build" steps into
-   two separate fires (rather than one routine blocking for up to 2 hours)
-   avoids holding a cloud session open and paying for idle wait time — this
-   was flagged as an open design question earlier and the user's own
-   "default to 10x by noon" rule resolves it cleanly.
+**Live routines (created 2026-08-19):**
+- **`bet-of-the-day-ask-and-build`** (`trig_01Ayo39Y6uJ55E8keGVpMjAK`) — daily
+  `0 7 * * *` UTC (10:00 EEST). Sends the cotă question, then **blocks for up
+  to 2 hours** (`collect_cota_choice.py --max-wait-seconds 7200`) and builds +
+  sends the bet **the instant a response arrives** — not on a fixed later
+  checkpoint. If nobody responds within the 2 hours, it defaults to 10x and
+  proceeds anyway. This was a deliberate redesign: an earlier two-routine
+  split (ask at 10:00, separately check-and-build at 12:00 regardless of when
+  the user actually responded) was built and discarded because it couldn't
+  react immediately — see Learnings.
+- **Results follow-up routine — not created yet.** Needs yesterday's exact
+  picks (fixture ids, bet types, selections) to grade, and there's currently
+  no durable way to pass that from one day's routine run to the next — see
+  "Known gap" below. Run `tools/fetch_results.py` → narrative → `tools/prepare_results_message.py`
+  → `tools/send_telegram.py` manually each morning in the meantime (ask the
+  agent to do it; takes seconds).
 
-**⚠ Currently blocked (confirmed 2026-08-18, both tested live):**
-1. **No repo access for routines.** Creating any routine with this repo as a
-   `git_repository` source fails at creation with `403 "You don't have access
-   to a repository this routine uses"` — the GitHub App that backs Claude Code
-   routines isn't installed/authorized for this repo (`github.com/settings/installations`
-   was empty when checked earlier). This is separate from normal local `git`/`gh`
-   auth, which already works fine for this session's own commits/pushes. The
-   user needs to connect/install the GitHub App via claude.ai's routine or
-   connector settings (possibly gated by plan tier) before a repo-bound
-   routine can be created.
-   **Troubleshooting trail (2026-08-18), user walked through this live:**
-   - claude.ai's Connectors page (`claude.ai/customize/connectors`) has a
-     "GitHub Integration" row — connecting it only grants an OAuth-level
-     authorization (identity + "know which resources you can access" +
-     "act on your behalf"), confirmed by checking GitHub's own
-     `github.com/settings/installations` → **Authorized GitHub Apps** tab
-     (showed "Claude" by Anthropic, "Never used"). Critically, this does
-     **not** show up under the **Installed GitHub Apps** tab at all — OAuth
-     authorization and GitHub App installation are two different steps, and
-     only the installation step grants actual repository access.
-   - Revoked the stale OAuth grant and reconnected from scratch (also tried
-     triggering it via the routine creator's "Select a repository" picker
-     directly) — both times GitHub's "Claude by Anthropic wants access to
-     your GitHub account" screen appeared, and clicking Authorize redirected
-     straight back to claude.ai's routine editor with **no repository
-     selection / installation screen ever shown**. The install step that
-     should grant per-repo access is simply not being triggered by either
-     entry point tried.
-   - Checked GitHub Marketplace directly (searching "Claude code") as a
-     bypass — no official Anthropic-owned GitHub App is listed there; all
-     19 results were unrelated third-party tools that happen to mention
-     "Claude" in their description. So there's no public Marketplace
-     install link to fall back on either.
-   - **Conclusion: this needs Anthropic support, not more UI troubleshooting.**
-     Either the "Authorize → Install" handoff is broken for this account, or
-     full GitHub App installation for routines is plan-gated and the flow
-     intentionally stops at OAuth-only. Recommended the user file a support
-     ticket with the exact repro: "Claude" shows as an authorized OAuth app
-     (never used) but never completes GitHub App installation, so every
-     routine repository picker shows "No repositories found."
-2. **No safe way to give a routine the API keys.** Even if #1 is fixed, a
-   cloned repo would NOT include `.env` (it's gitignored, correctly). Secrets
-   would need to reach the routine some other way — but embedding
-   `TELEGRAM_BOT_TOKEN`/`API_FOOTBALL_KEY` directly into a routine's stored
-   prompt was tested live and **blocked by the auto-mode safety classifier**
-   (flagged as a risky pattern: a live, retrievable credential written into a
-   stored, reusable config). This is a hard rule, not a bug — it should not
-   and will not be worked around by disguising the token or splitting it
-   across the prompt. The legitimate fix is a proper secrets-injection
-   mechanism at the environment level (if claude.ai's environment settings
-   support attaching secrets as env vars, that would sidestep the "written
-   into a stored prompt" pattern the classifier is reacting to) — this needs
-   to be set up by the user through the web UI, not through this tool access.
-
-**Until both are resolved, these routines cannot be created via this
-session's tool access.** Options for the user: (a) sort out GitHub App /
-routine repo access and check whether claude.ai's environment settings
-support attaching secrets separately from the prompt, then ask again to
-create the three routines above; or (b) create the routines directly through
-https://claude.ai/code/routines, where the web UI may expose a secrets field
-this API-level tool access doesn't have.
+**How the repo-access and secrets blockers actually got resolved
+(2026-08-18/19), for reference:**
+- **Repo access was gated on the repo being private**, not a broken flow —
+  confirmed by making `bet-of-the-day` public (safe: `.env`/`credentials.json`/
+  `token.json` were never in git history) and immediately seeing the
+  repository picker populate and a test routine clone successfully. Full
+  troubleshooting trail (Connectors page vs. the actual GitHub App install
+  screen, the OAuth-vs-installation distinction on `github.com/settings/installations`,
+  Marketplace search turning up nothing official) is preserved further down
+  in Learnings in case this regresses or comes up again on another account.
+- **No proper secrets mechanism exists on the platform.** Checked every
+  reasonable place: Connectors (general OAuth integrations, not this), and
+  claude.ai's cloud "Environment" settings (`Environment variables` field) —
+  which **explicitly says "don't add secrets or credentials," visible to
+  anyone using the environment.** There is no separate vault. The user
+  explicitly chose to accept that tradeoff and put `TELEGRAM_BOT_TOKEN`,
+  `TELEGRAM_CHAT_IDS`, and `API_FOOTBALL_KEY` into the `bet-of-the-day` cloud
+  environment's variables anyway (environment id `env_01921dE8gAA9P7J5vaLd4xnQ`),
+  against the platform's own warning. Embedding the same secrets directly
+  into a routine's *prompt* text (as opposed to the environment's dedicated
+  variables field) was tested separately and **is blocked by the auto-mode
+  safety classifier** — that block was not worked around; the environment
+  variables field was the path actually used instead.
+- **Repo write access is separately blocked** (confirmed live: branch +
+  commit succeed locally in the sandbox, `git push` returns 403) — read-only
+  installation. This is what rules out git-based state persistence for the
+  results routine; see Learnings and the "Known gap" note.
 
 Telegram's bot token has no expiry, which removes the token-rotation problem
-the earlier WhatsApp design had — that part of the design is still sound,
-it's the routine plumbing that's blocked.
+the earlier WhatsApp design had.
+
+**Known gap: cross-day state for the results routine.** `.tmp/` is correctly
+gitignored (disposable), and routines can't write back to the repo (confirmed
+above) — so a bet built by today's routine leaves no durable trace a
+tomorrow's routine could read. Telegram can't fill this gap either: bots can
+only see messages sent *to* them via `getUpdates`, never their own past sent
+messages, so there's no way to "read back" a bet the bot itself posted
+yesterday. Until there's a real external store (the platform's environment
+variables aren't it — they're static config set once via the UI, not
+something a routine can write to at runtime), the results follow-up stays a
+manual step.
 
 ## Edge Cases
 
-- **User doesn't respond to the cotă question** (`collect_cota_choice.py` times
-  out after `--max-wait-seconds`) — fall back to the default 10x target and
-  proceed rather than blocking the whole morning's send indefinitely. Note the
-  fallback in the final report.
+- **User doesn't respond to the cotă question within the wait window**
+  (`collect_cota_choice.py` returns `chosen_cota: null` after `--max-wait-seconds`,
+  2 hours in the live routine) — proceed immediately with the default 10x
+  target rather than erroring or blocking further. Note the fallback in the
+  final report.
 - **Manual cotă entry over 100x** — already handled inside `collect_cota_choice.py`
   itself (rejects and re-prompts, never reaches this workflow's later steps) —
   nothing extra to do here.
@@ -507,30 +489,25 @@ it's the routine plumbing that's blocked.
   warns and sends as a new message instead of a threaded reply. Not fatal, just
   less nice — worth checking why the persistence step didn't run the day before.
 
-**⚠ Not yet solved — matters once this becomes an unattended cloud routine:**
+**⚠ Not yet solved — blocks wiring up the results routine specifically:**
 the results follow-up depends on `.tmp/bet_spec_<date>.json` and
-`.tmp/telegram_sent_<date>.json` from *yesterday's* run still being on disk
-*today*. That's true when testing locally in this repo, but a repo-less cloud
-routine (see Scheduling) starts from a completely fresh environment on every
-fire — nothing written to disk on Monday survives to Tuesday. Before this
-follow-up feature can run unattended, that state needs to live somewhere that
-actually persists between routine fires (a small external store — a Gist, a
-Google Sheet, anything reachable over HTTP — not local disk). Don't wire up
-the results follow-up in the cloud routine until this is solved; it'll just
-silently skip every day (falling into the "no file exists for yesterday" case
-above) rather than error, which is easy to miss.
+`.tmp/telegram_sent_<date>.json` from *yesterday's* run still being readable
+*today*. Locally that's just disk persistence; for a cloud routine it turns
+out neither `.tmp/` (gitignored, correctly) nor a git push (confirmed
+blocked, read-only installation — see Scheduling) can carry that state
+between separate daily fires, and Telegram can't either (bots can't read
+back their own past sent messages). See Scheduling's "Known gap" note for
+the full picture. Don't wire up the results routine until this has a real
+external store to write to; it would otherwise silently have nothing to
+grade every day, which is easy to miss.
 
-**⚠ Also not yet solved:** `collect_cota_choice.py` blocks synchronously,
-waiting on real user interaction (up to `--max-wait-seconds`, default 10
-minutes). That's fine for a manually-run session like this one, but an
-unattended cloud routine holding a session open for up to 10 minutes waiting
-on a button tap is a different resource/cost profile than the rest of this
-pipeline (each other step runs in seconds). Worth deciding explicitly — before
-wiring this into the routine — whether that wait is acceptable as-is, should
-have a shorter timeout with an earlier fallback to the 10x default, or should
-be split into two separate routine fires (one that asks, one later that reads
-whatever arrived and proceeds) the way the results follow-up's persistence
-problem might end up being solved too.
+**Resolved (2026-08-19):** the concern about `collect_cota_choice.py`
+blocking synchronously for a long wait turned out to be the *correct* design,
+not a problem to route around — the user explicitly wants the bet built the
+instant they respond, not on a fixed later checkpoint, which only a single
+long-blocking wait can do (a two-fire ask/build split was tried and
+discarded for exactly this reason). The live routine accepts the cost of a
+cloud session staying open for up to 2 hours on days nobody responds quickly.
 
 ## Learnings
 
@@ -698,3 +675,29 @@ problem might end up being solved too.
       against known score scenarios — all correct.
     - `ODDS_API_KEY` / The Odds API are no longer used by this workflow's
       tools; left in `.env` untouched rather than deleted.
+- **Cloud routines finally got wired up (2026-08-19).** Root cause of the
+  repo-access 403 turned out to be simple: **the repo was private**, and
+  routine repository access is gated on visibility on this account/plan —
+  making `bet-of-the-day` public (safe, verified no secrets ever hit git
+  history) immediately fixed it; a test routine cloned successfully on the
+  first try afterward. Then found repo **write** access is separately
+  blocked (branch+commit succeed locally, `git push` returns 403 — read-only
+  installation), which rules out git as a state-persistence mechanism for
+  the still-unbuilt results routine. Also exhaustively confirmed there's no
+  secrets vault on the platform (checked Connectors, and the cloud
+  "Environment" settings' variables field, which explicitly warns against
+  putting secrets there) — the user knowingly accepted that gap and put the
+  three keys into the `bet-of-the-day` environment's variables anyway.
+  Built the first version as two separate routines (ask at 10:00, check-and-
+  build at 12:00 regardless of response timing) to avoid holding a session
+  open for 2 hours — then the user clarified the actual requirement was to
+  build **immediately** on response, only defaulting to 10x if nothing
+  arrived by noon. A fixed-checkpoint design structurally can't do that (the
+  second routine simply doesn't wake up until its cron fires), so rebuilt as
+  **one routine** that sends the question and blocks up to 2 hours,
+  reacting the instant a response lands. Discovered along the way that
+  Telegram's `getUpdates` offset is consumed server-side permanently once
+  read — useful fact, no longer load-bearing for the final design, but
+  documented in case a stateless split-fire design is ever wanted again.
+  Live routine: `bet-of-the-day-ask-and-build` (`trig_01Ayo39Y6uJ55E8keGVpMjAK`),
+  daily `0 7 * * *` UTC.
