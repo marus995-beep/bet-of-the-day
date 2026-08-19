@@ -66,8 +66,9 @@ def load_json(path_arg, label):
 
 
 def format_pick_block(index, pick, summary):
-    pick_line = f"{index}⃣ {escape_markdown(pick['pick'])} @ {pick['odds']:g} — {escape_markdown(pick['match'])}"
-    return f"{pick_line}\n\U0001F4AC {escape_markdown(summary)}"
+    match_line = f"{index}⃣ {escape_markdown(pick['match'])}"
+    pick_line = f"{escape_markdown(pick['pick'])} @ {pick['odds']:g}"
+    return f"{match_line}\n{pick_line}\n\U0001F4AC {escape_markdown(summary)}"
 
 
 def main():
