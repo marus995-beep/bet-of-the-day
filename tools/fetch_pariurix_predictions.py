@@ -14,13 +14,20 @@ pariurix.com") if it's used at all.
 No public API — this scrapes two kinds of pages:
   1. The /ponturi listing, which embeds today's-and-upcoming fixtures as
      schema.org SportsEvent JSON-LD (teams, league, kickoff time, a detail
-     page URL). This is NOT limited to "today" — observed covering a rolling
-     multi-day window a few days out, so a given date (including today)
-     may come back with zero picks if pariurix hasn't published for it yet.
-  2. Each fixture's own detail page, scraped for: the pick + tipster name
-     (from the page's <meta name="description">, format "{match} pont:
-     {pick}, adaugat de {tipster}, pe {date}"), the cotă (a specific div),
-     the bookmaker name (an image alt attribute), and the analysis text.
+     page URL, and — usefully — a "description" field that turned out to
+     carry the real stat-driven analysis text, e.g. recent form, head-to-head
+     goal counts). This is NOT limited to "today" — observed covering a
+     rolling multi-day window a few days out, so a given date (including
+     today) may come back with zero picks if pariurix hasn't published for
+     it yet.
+  2. Each fixture's own detail page, scraped only for what the listing
+     doesn't have: the pick + tipster name (from the page's
+     <meta name="description">, format "{match} pont: {pick}, adaugat de
+     {tipster}, pe {date}"), the cotă (a specific div), and the bookmaker
+     name (an image alt attribute). Its own "tips-section-analysis" div was
+     tried first for the analysis text but turned out to be a thinner,
+     more boilerplate blurb than the listing's "description" field — not
+     used for that anymore.
 
 Fragile by nature (HTML scraping, not a real API) — if pariurix changes its
 page structure, this will need updating. Does NOT get blocked by Cloudflare
@@ -99,14 +106,13 @@ def parse_listing(listing_html):
     return [e for e in events if e.get("@type") == "SportsEvent"]
 
 
-def strip_html(fragment):
-    text = re.sub(r"<[^>]+>", " ", fragment)
-    text = html.unescape(text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def extract_detail(detail_html, home_team=None, away_team=None):
-    pick, tipster, odds, bookmaker, analysis = None, None, None, None, None
+def extract_detail(detail_html):
+    """Pick, tipster, odds, and bookmaker only — the analysis text comes from
+    the listing page's JSON-LD "description" field instead (see main()),
+    which turned out to carry the real stat-driven analysis; this page's own
+    "tips-section-analysis" div is a thinner, more boilerplate blurb by
+    comparison."""
+    pick, tipster, odds, bookmaker = None, None, None, None
 
     m = re.search(r'<meta name="description" content="(.*?)"', detail_html, re.S)
     if m:
@@ -129,20 +135,7 @@ def extract_detail(detail_html, home_team=None, away_team=None):
     if m4:
         bookmaker = m4.group(1)
 
-    m5 = re.search(
-        r'<div class="tips-section-analysis">(.*?)</div>\s*</div>', detail_html, re.S
-    )
-    if m5:
-        analysis = strip_html(m5.group(1))
-        # the section's own <h2> heading ("Analiză și informații pentru X v Y")
-        # is redundant once the match is already shown elsewhere — drop it,
-        # using the known team names for an exact (not heuristic) match.
-        if home_team and away_team:
-            heading = f"Analiză și informații pentru {home_team} v {away_team}"
-            if analysis.startswith(heading):
-                analysis = analysis[len(heading):].strip()
-
-    return pick, tipster, odds, bookmaker, analysis
+    return pick, tipster, odds, bookmaker
 
 
 def main():
@@ -195,7 +188,7 @@ def main():
         home_team = competitors[0]["name"] if len(competitors) > 0 else None
         away_team = competitors[1]["name"] if len(competitors) > 1 else None
 
-        pick, tipster, odds, bookmaker, analysis = extract_detail(detail_html, home_team, away_team)
+        pick, tipster, odds, bookmaker = extract_detail(detail_html)
         if pick is None or odds is None:
             warn(f"Could not extract pick/odds for {event.get('name')!r} from its detail page — skipping "
                  "(page structure may not match what this scraper expects).")
@@ -211,7 +204,7 @@ def main():
             "tipster": tipster,
             "odds": odds,
             "bookmaker": bookmaker,
-            "analysis_raw": analysis,
+            "analysis_raw": event.get("description"),
             "source_url": detail_url,
         })
 
