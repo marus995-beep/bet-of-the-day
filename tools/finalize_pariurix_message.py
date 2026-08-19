@@ -70,7 +70,7 @@ def format_pick_block(index, pick, summary):
     lines = [match_line]
     if pick.get("league"):
         lines.append(escape_markdown(pick["league"]))
-    lines.append(f"{escape_markdown(pick['pick'])} @ {pick['odds']:g}")
+    lines.append(f"{escape_markdown(pick['pick'])} @ {pick['odds']:.2f}")
     lines.append(f"\U0001F4AC {escape_markdown(summary)}")
     return "\n".join(lines)
 
