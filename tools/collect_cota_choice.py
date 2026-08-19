@@ -84,16 +84,30 @@ def date_display(date_str):
         return date_str
 
 
+def question_text(date_str):
+    return f"\U0001F3B2 Ce cotă vrei pentru biletul zilei {date_display(date_str)}?"
+
+
 def send_question(token, chat_id, date_str):
     keyboard = [[{"text": f"Cota {n}x", "callback_data": f"cota:{n}"}] for n in PRESET_COTAS]
     keyboard.append([{"text": "Adaugă cotă manual", "callback_data": "cota:manual"}])
     result = api(
         token, "sendMessage",
         chat_id=chat_id,
-        text=f"\U0001F3B2 Ce cotă vrei pentru biletul zilei {date_display(date_str)}?",
+        text=question_text(date_str),
         reply_markup={"inline_keyboard": keyboard},
     )
     return result["message_id"]
+
+
+def lock_question(token, chat_id, message_id, date_str, status_line):
+    """Remove the question message's keyboard and append a status line, so
+    the buttons can't be tapped again once a choice is in progress or made.
+    Cosmetic — never let this failure block the actual flow."""
+    api(token, "editMessageText", critical=False,
+        chat_id=chat_id, message_id=message_id,
+        text=f"{question_text(date_str)}\n\n{status_line}",
+        reply_markup={"inline_keyboard": []})
 
 
 def clear_backlog_offset(token):
@@ -154,6 +168,8 @@ def main():
                 if data == "cota:manual":
                     api(token, "answerCallbackQuery", critical=False,
                         callback_query_id=cq["id"], text="Introdu cota manual mai jos.")
+                    lock_question(token, chat_id, question_message_id, args.date,
+                                  "✏️ Introduci cota manual...")
                     api(token, "sendMessage", chat_id=chat_id,
                         text=f"Introdu cota dorită (număr, maxim {MAX_ALLOWED_COTA:g}x):")
                     awaiting_manual = True
@@ -162,6 +178,10 @@ def main():
                     chosen = float(data.split(":", 1)[1])
                     api(token, "answerCallbackQuery", critical=False,
                         callback_query_id=cq["id"], text=f"Ai ales cota {chosen:g}x!")
+                    lock_question(token, chat_id, question_message_id, args.date,
+                                  f"✅ Cotă aleasă: {chosen:g}x")
+                    api(token, "sendMessage", chat_id=chat_id,
+                        text="\U0001F3B0 Biletul dumneavoastră este în curs de generare, vă rugăm așteptați...")
                     result = {"date": args.date, "chat_id": chat_id, "chosen_cota": chosen, "source": "button"}
                     write_output(args, result)
                     return
@@ -181,7 +201,8 @@ def main():
                     api(token, "sendMessage", chat_id=chat_id,
                         text=f"Cota maximă permisă este {MAX_ALLOWED_COTA:g}x. Te rog introdu o valoare mai mică:")
                     continue
-                api(token, "sendMessage", chat_id=chat_id, text=f"Ai ales cota {value:g}x, se generează biletul...")
+                api(token, "sendMessage", chat_id=chat_id,
+                    text=f"Ai ales cota {value:g}x.\n\U0001F3B0 Biletul dumneavoastră este în curs de generare, vă rugăm așteptați...")
                 result = {"date": args.date, "chat_id": chat_id, "chosen_cota": value, "source": "manual"}
                 write_output(args, result)
                 return
