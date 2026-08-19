@@ -12,14 +12,17 @@ without independent cross-checking. Attribute it ("conform tipsterului X on
 pariurix.com") if it's used at all.
 
 No public API — this scrapes two kinds of pages:
-  1. The /ponturi listing, which embeds today's-and-upcoming fixtures as
-     schema.org SportsEvent JSON-LD (teams, league, kickoff time, a detail
-     page URL, and — usefully — a "description" field that turned out to
-     carry the real stat-driven analysis text, e.g. recent form, head-to-head
-     goal counts). This is NOT limited to "today" — observed covering a
-     rolling multi-day window a few days out, so a given date (including
-     today) may come back with zero picks if pariurix hasn't published for
-     it yet.
+  1. The /ponturi/fotbal listing, PAGINATED (/pagina-2, /pagina-3, ...),
+     which embeds fixtures as schema.org SportsEvent JSON-LD (teams, league,
+     kickoff time, a detail page URL, and — usefully — a "description" field
+     that turned out to carry the real stat-driven analysis text, e.g.
+     recent form, head-to-head goal counts). Pagination is NOT strictly
+     chronological by kickoff — it's closer to publish order, so a single
+     day's fixtures can be split across the first couple of pages before
+     later pages roll into older, unrelated dates (confirmed live: one day's
+     17 fixtures were split 7 on page 1 / 10 on page 2, with page 3 pure
+     history). collect_events_for_date() pages through and stops once it's
+     confident it's past the target date's content — see MIN_PAGES_ALWAYS_SCANNED.
   2. Each fixture's own detail page, scraped only for what the listing
      doesn't have: the pick + tipster name (from the page's
      <meta name="description">, format "{match} pont: {pick}, adaugat de
@@ -68,6 +71,7 @@ USER_AGENT = (
 )
 REQUEST_DELAY_SECONDS = 1.5  # politeness between detail-page fetches
 MAX_DETAIL_FETCHES = 20  # safety cap per run
+MAX_LISTING_PAGES = 15  # safety cap on listing pagination (site has hundreds of pages of history)
 
 
 def fail(message):
@@ -111,6 +115,41 @@ def parse_listing(listing_html):
     except json.JSONDecodeError as exc:
         fail(f"pariurix.com's JSON-LD listing was not valid JSON ({exc}) — page structure likely changed.")
     return [e for e in events if e.get("@type") == "SportsEvent"]
+
+
+def listing_page_url(page_num):
+    return LISTING_URL if page_num == 1 else f"{LISTING_URL}/pagina-{page_num}"
+
+
+MIN_PAGES_ALWAYS_SCANNED = 2  # today's fixtures were empirically split across pages 1-2
+
+
+def collect_events_for_date(target_date_str, max_pages):
+    """Page through the listing collecting every event on target_date_str.
+    Pagination here is NOT purely chronological by kickoff — it's closer to
+    publish order, so a single day's fixtures can be split across a couple
+    of pages before the pagination rolls into older, unrelated dates
+    (confirmed live: today's games were split across pages 1 and 2, with
+    page 3 onward pure history). Always scans at least MIN_PAGES_ALWAYS_SCANNED
+    pages regardless of early zero-match pages, then stops at the first empty
+    page after that. Returns (matching_events, all_dates_seen_across_scanned_pages)."""
+    matching = []
+    all_dates_seen = set()
+    for page_num in range(1, max_pages + 1):
+        if page_num > 1:
+            time.sleep(REQUEST_DELAY_SECONDS)
+        page_html = fetch_page(listing_page_url(page_num), critical=(page_num == 1))
+        if page_html is None:
+            break
+        events = parse_listing(page_html)
+        if not events:
+            break
+        all_dates_seen.update(e["startDate"][:10] for e in events if "startDate" in e)
+        page_matches = [e for e in events if e.get("startDate", "")[:10] == target_date_str]
+        matching.extend(page_matches)
+        if not page_matches and page_num >= MIN_PAGES_ALWAYS_SCANNED:
+            break
+    return matching, sorted(all_dates_seen)
 
 
 def extract_detail(detail_html):
@@ -162,12 +201,8 @@ def main():
         else datetime.now(ROMANIA_TZ).date()
     )
 
-    listing_html = fetch_page(LISTING_URL)
-    events = parse_listing(listing_html)
-
-    available_dates = sorted(set(e["startDate"][:10] for e in events if "startDate" in e))
     requested_date = target_date.isoformat()
-    matching = [e for e in events if e.get("startDate", "")[:10] == requested_date]
+    matching, available_dates = collect_events_for_date(requested_date, MAX_LISTING_PAGES)
 
     if not matching and args.allow_fallback_date:
         # Tips are typically published a day or more ahead of kickoff, so
@@ -180,7 +215,8 @@ def main():
                 f"No pariurix picks for {requested_date} — falling back to the nearest "
                 f"published date, {target_date.isoformat()}."
             )
-            matching = [e for e in events if e.get("startDate", "")[:10] == target_date.isoformat()]
+            matching, more_dates = collect_events_for_date(target_date.isoformat(), MAX_LISTING_PAGES)
+            available_dates = sorted(set(available_dates) | set(more_dates))
 
     if not matching:
         warn(
@@ -188,6 +224,19 @@ def main():
             + (" (fallback was not allowed)." if not args.allow_fallback_date else " even after fallback.")
             + f" Dates currently published on pariurix.com: {available_dates or '(none found)'}."
         )
+
+    seen_urls = set()
+    deduped = []
+    for event in matching:
+        url = event.get("url")
+        if url and url in seen_urls:
+            continue
+        if url:
+            seen_urls.add(url)
+        deduped.append(event)
+    if len(deduped) != len(matching):
+        warn(f"Removed {len(matching) - len(deduped)} duplicate fixture(s) seen across multiple listing pages.")
+    matching = deduped
 
     predictions = []
     for i, event in enumerate(matching):
