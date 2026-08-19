@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Randomly assemble a combined bet from pariurix.com tipster picks that
-targets a chosen cotă, and format the Telegram message.
+"""Randomly select a combination of pariurix.com tipster picks that targets
+a chosen cotă.
 
 Unlike prepare_bet_slip.py (which validates an agent-curated picks-spec),
 this tool does the SELECTION itself — randomly sampling combinations of
@@ -10,21 +10,21 @@ within tolerance of --target-odds, or the closest one found after
 (product of each leg's cotă) — randomness only decides which legs are in the
 bet, never the arithmetic.
 
-Each leg's rationale is the tipster's own analysis, clearly attributed (not
-presented as this project's own verified claim) — see
-fetch_pariurix_predictions.py's sourcing_note for why.
+Does NOT build the Telegram message. Each leg's full "analysis_raw" (the
+tipster's own words, untruncated) is carried through in the output — the
+agent should read it and write a short, original rephrasing per leg (not a
+truncated copy), then run finalize_pariurix_message.py with that alongside
+this tool's output to build the actual message.
 
 Usage:
     python tools/generate_pariurix_bet.py --predictions-file .tmp/pariurix/predictions-2026-08-21.json \
-        --target-odds 15 [--seed 42] [--max-attempts 2000] [--output .tmp/pariurix/bet-2026-08-21.json]
+        --target-odds 15 [--seed 42] [--max-attempts 2000] [--output .tmp/pariurix/selection-2026-08-21.json]
 """
 
 import argparse
 import json
 import random
-import re
 import sys
-from datetime import datetime
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -34,13 +34,6 @@ TARGET_TOLERANCE_LOW, TARGET_TOLERANCE_HIGH = 0.8, 1.3
 MAX_ALLOWED_TARGET_ODDS = 100.0
 DEFAULT_MAX_ATTEMPTS = 2000
 
-ROMANIAN_MONTHS = [
-    "ianuarie", "februarie", "martie", "aprilie", "mai", "iunie",
-    "iulie", "august", "septembrie", "octombrie", "noiembrie", "decembrie",
-]
-
-MARKDOWN_SPECIAL_CHARS = re.compile(r"([_*`\[])")
-
 
 def fail(message):
     print(f"ERROR: {message}", file=sys.stderr)
@@ -49,18 +42,6 @@ def fail(message):
 
 def warn(message):
     print(f"WARNING: {message}", file=sys.stderr)
-
-
-def escape_markdown(text):
-    return MARKDOWN_SPECIAL_CHARS.sub(r"\\\1", text)
-
-
-def date_display(date_str):
-    try:
-        parsed = datetime.strptime(date_str, "%Y-%m-%d")
-        return f"{parsed.day} {ROMANIAN_MONTHS[parsed.month - 1]} {parsed.year}"
-    except ValueError:
-        return date_str
 
 
 def combined_odds(picks):
@@ -97,33 +78,15 @@ def find_combination(predictions, target_odds, max_attempts, rng):
     return best_picks, best_combined, False
 
 
-def excerpt(text, max_len=220):
-    if not text:
-        return None
-    text = text.strip()
-    return text if len(text) <= max_len else text[:max_len].rsplit(" ", 1)[0] + "…"
-
-
-def format_pick_block(index, pick):
-    pick_line = f"{index}⃣ {escape_markdown(pick['pick'])} @ {pick['odds']:g} — {escape_markdown(pick['match'])}"
-    lines = [pick_line]
-
-    summary = excerpt(pick.get("analysis_raw"))
-    if summary:
-        lines.append(f"\U0001F4AC {escape_markdown(summary)}")
-
-    return "\n".join(lines)
-
-
 def main():
-    parser = argparse.ArgumentParser(description="Randomly build a combined bet from pariurix.com predictions.")
+    parser = argparse.ArgumentParser(description="Randomly select a combined bet from pariurix.com predictions.")
     parser.add_argument("--predictions-file", required=True, help="Output of fetch_pariurix_predictions.py.")
     parser.add_argument("--target-odds", type=float, default=DEFAULT_TARGET_ODDS,
                          help=f"Target combined odds. Default: {DEFAULT_TARGET_ODDS}.")
     parser.add_argument("--seed", type=int, default=None, help="Random seed, for reproducible test runs.")
     parser.add_argument("--max-attempts", type=int, default=DEFAULT_MAX_ATTEMPTS,
                          help=f"Random combinations to try before giving up. Default: {DEFAULT_MAX_ATTEMPTS}.")
-    parser.add_argument("--output", default=None, help="Output path. Default: .tmp/pariurix/bet-<date>.json")
+    parser.add_argument("--output", default=None, help="Output path. Default: .tmp/pariurix/selection-<date>.json")
     args = parser.parse_args()
 
     if args.target_odds > MAX_ALLOWED_TARGET_ODDS:
@@ -165,16 +128,6 @@ def main():
         )
 
     combined = round(combined, 2)
-    date_display_str = date_display(date_str) if date_str else "?"
-    pick_blocks = [format_pick_block(i, p) for i, p in enumerate(picks, start=1)]
-
-    telegram_message = (
-        f"\U0001F3AF *Biletul Zilei* — {date_display_str}\n\n"
-        + "\n\n".join(pick_blocks)
-        + f"\n\n\U0001F4B0 Cotă combinată: *{combined:.2f}x*"
-        + "\n\n\U0001F51E Pronosticuri generate de AI, doar pentru divertisment. "
-        "Nu reprezintă sfaturi financiare — joacă responsabil."
-    )
 
     result = {
         "date": date_str,
@@ -183,19 +136,20 @@ def main():
         "combined_odds": combined,
         "within_tolerance": within_tolerance,
         "picks": picks,
-        "telegram_message": telegram_message,
     }
 
-    output_path = Path(args.output) if args.output else REPO_ROOT / ".tmp" / "pariurix" / f"bet-{date_str}.json"
+    output_path = Path(args.output) if args.output else REPO_ROOT / ".tmp" / "pariurix" / f"selection-{date_str}.json"
     if not output_path.is_absolute():
         output_path = REPO_ROOT / output_path
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    print(f"Saved pariurix bet to: {output_path}")
+    print(f"Saved pariurix selection to: {output_path}")
     print(f"Combined odds: {combined}x (within tolerance: {within_tolerance})")
-    print("---")
-    print(telegram_message)
+    for i, p in enumerate(picks, start=1):
+        print(f"  {i}. {p['pick']} @ {p['odds']:g} — {p['match']}")
+    print("Next: write a short, original rephrasing of each leg's analysis_raw, "
+          "then run finalize_pariurix_message.py.")
 
 
 if __name__ == "__main__":
