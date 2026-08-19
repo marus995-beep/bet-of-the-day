@@ -53,7 +53,7 @@ import requests
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 BASE_URL = "https://pariurix.com"
-LISTING_URL = f"{BASE_URL}/ponturi"
+LISTING_URL = f"{BASE_URL}/ponturi/fotbal"  # football only — /ponturi mixes in tennis/other sports
 ROMANIA_TZ = ZoneInfo("Europe/Bucharest")
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
