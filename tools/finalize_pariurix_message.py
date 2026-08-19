@@ -88,6 +88,18 @@ def main():
     if not picks:
         fail("Selection file has no 'picks'.")
 
+    date_str = selection.get("date")
+    off_date = [
+        p for p in picks
+        if p.get("commence_time_local") and not p["commence_time_local"].startswith(date_str or "")
+    ]
+    if off_date:
+        fail(
+            f"Refusing to build a 'Biletul Zilei {date_str}' message containing a leg not on "
+            f"that date: {off_date[0]['match']!r} kicks off {off_date[0].get('commence_time_local')!r}. "
+            "The selection file is inconsistent — re-run generate_pariurix_bet.py."
+        )
+
     summaries_data, _ = load_json(args.summaries_file, "Summaries file")
     summaries = summaries_data.get("summaries")
     if not isinstance(summaries, list):

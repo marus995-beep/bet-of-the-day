@@ -34,9 +34,16 @@ page structure, this will need updating. Does NOT get blocked by Cloudflare
 (confirmed live, unlike some other tipster sites checked first) but is still
 scraping someone else's website — keep this to once a day, not hammered.
 
+By default this is STRICT about the date: only fixtures whose kickoff falls
+on exactly --date are returned, nothing else — if pariurix hasn't published
+for that date, the result is legitimately zero predictions, not a different
+day's games. Pass --allow-fallback-date to opt into substituting the nearest
+later published date instead (useful for manual testing, not used in the
+daily routine, since "today's bet" must actually be today's games).
+
 Usage:
     python tools/fetch_pariurix_predictions.py [--date 2026-08-21] \
-        [--max-fetches 20] [--output .tmp/pariurix/predictions-2026-08-21.json]
+        [--max-fetches 20] [--allow-fallback-date] [--output .tmp/pariurix/predictions-2026-08-21.json]
 """
 
 import argparse
@@ -143,8 +150,9 @@ def main():
     parser.add_argument("--date", default=None, help="Target date YYYY-MM-DD (Europe/Bucharest). Default: today.")
     parser.add_argument("--max-fetches", type=int, default=MAX_DETAIL_FETCHES,
                          help=f"Cap on detail-page fetches per run. Default: {MAX_DETAIL_FETCHES}.")
-    parser.add_argument("--no-fallback-date", action="store_true",
-                         help="Don't fall back to the nearest published date if --date has no picks.")
+    parser.add_argument("--allow-fallback-date", action="store_true",
+                         help="Fall back to the nearest published date if --date has no picks. "
+                              "Off by default — the caller gets strictly --date's games or nothing.")
     parser.add_argument("--output", default=None, help="Output JSON path. Default: .tmp/pariurix/predictions-<date>.json")
     args = parser.parse_args()
 
@@ -161,7 +169,7 @@ def main():
     requested_date = target_date.isoformat()
     matching = [e for e in events if e.get("startDate", "")[:10] == requested_date]
 
-    if not matching and not args.no_fallback_date:
+    if not matching and args.allow_fallback_date:
         # Tips are typically published a day or more ahead of kickoff, so
         # "today" is often empty — fall back to the nearest LATER published
         # date rather than silently returning nothing every morning.
@@ -176,9 +184,9 @@ def main():
 
     if not matching:
         warn(
-            f"No pariurix picks found for {requested_date} (or any later date, if fallback "
-            f"was allowed). Dates currently published on pariurix.com: "
-            f"{available_dates or '(none found)'}."
+            f"No pariurix picks found for {requested_date}"
+            + (" (fallback was not allowed)." if not args.allow_fallback_date else " even after fallback.")
+            + f" Dates currently published on pariurix.com: {available_dates or '(none found)'}."
         )
 
     predictions = []

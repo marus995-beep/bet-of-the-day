@@ -114,6 +114,21 @@ def main():
     all_predictions = data.get("predictions") or []
     date_str = data.get("date")
 
+    # Defense in depth: fetch_pariurix_predictions.py already filters to one
+    # exact date, but never trust that silently — a leg whose kickoff isn't
+    # on `date_str` must never end up under a "Biletul Zilei <date_str>"
+    # header, so re-check here regardless of how the predictions file was made.
+    off_date = [
+        p for p in all_predictions
+        if p.get("commence_time_local") and not p["commence_time_local"].startswith(date_str or "")
+    ]
+    if off_date:
+        warn(
+            f"Excluded {len(off_date)} prediction(s) whose kickoff isn't on {date_str} "
+            f"— e.g. {off_date[0]['match']!r} ({off_date[0].get('commence_time_local')})."
+        )
+    all_predictions = [p for p in all_predictions if p not in off_date]
+
     predictions = [p for p in all_predictions if p.get("odds") is not None and p["odds"] <= MAX_LEG_ODDS]
     excluded = len(all_predictions) - len(predictions)
     if excluded:
