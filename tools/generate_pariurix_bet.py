@@ -108,14 +108,6 @@ def format_pick_block(index, pick):
     pick_line = f"{index}⃣ {escape_markdown(pick['pick'])} @ {pick['odds']:g} — {escape_markdown(pick['match'])}"
     lines = [pick_line]
 
-    bits = []
-    if pick.get("tipster"):
-        bits.append(f"pont de {escape_markdown(pick['tipster'])} (pariurix.com)")
-    if pick.get("bookmaker"):
-        bits.append(f"cotă de la {escape_markdown(pick['bookmaker'])}")
-    if bits:
-        lines.append(f"\U0001F4CC {', '.join(bits)}")
-
     summary = excerpt(pick.get("analysis_raw"))
     if summary:
         lines.append(f"\U0001F4AC {escape_markdown(summary)}")
@@ -180,7 +172,6 @@ def main():
         f"\U0001F3AF *Biletul Zilei* — {date_display_str}\n\n"
         + "\n\n".join(pick_blocks)
         + f"\n\n\U0001F4B0 Cotă combinată: *{combined:.2f}x*"
-        + "\n\n⚠️ Ponturi preluate de la tipsteri (pariurix.com), neverificate independent de noi."
         + "\n\n\U0001F51E Pronosticuri generate de AI, doar pentru divertisment. "
         "Nu reprezintă sfaturi financiare — joacă responsabil."
     )
